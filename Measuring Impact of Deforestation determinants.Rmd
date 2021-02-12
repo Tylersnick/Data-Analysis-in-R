@@ -1,0 +1,180 @@
+---
+title: "Measuring Impact of Deforestation Determinants"
+author: "Tyler Slebodnick"
+date: "2/11/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+## Introduction
+
+In this analysis, I explore cross-level country data of deforestation rates in developing countries. The data used for analysis is taken from [The World Bank](https://data.worldbank.org/), [Global Forest Watch](http://data.globalforestwatch.org/), and [International Country Risk Guide (ICRG)](https://doi.org/10.7910/DVN/4YHTPU).
+
+### Loading in the packages
+
+```{r, echo=TRUE}
+library(rmarkdown)
+library(stargazer)
+library(plm)
+library(foreign)
+library(gplots)
+library(tidyverse)
+```
+
+### Loading in the dataset 
+
+```{r, echo=TRUE}
+panel = read.csv('def.csv')
+```
+
+### Outputting the statistics of the data set 
+
+Variable        Description
+-------------  -------------
+  deforestation   Deforestation rate (annual percentage change)
+rpopgr          Rural Population Growth (annual percentage change)
+arable          Percentage of land area
+crop            Crop production index(2004-06)
+trade           Percentage of GDP
+gdppc           GDP per capita (per 1k USD)
+rpop            Percentage of total population
+polity          Political stability index (index -2.5~2.5)
+cpscore         Political risk component(index 0-6)
+
+
+
+```{r}
+str(panel)
+summary(panel)
+```
+
+The figure displays the summary statistics for each independent variable and the dependent variable.
+
+I am working with 418 observations and 12 variables across a period of 11 years.
+
+### Exploring the data
+
+```{r}
+ggplot(panel, mapping = aes(x = year, y = deforestation)) +
+  geom_point(alpha = 1, aes(color = region)) + ggtitle("Annual Deforestation rate by region (2006-2016)")
+```
+
+Regional deforestation has been increasing since 2006. This could be due to a number of reasons. Let's look into our variables furthur. 
+
+```{r}
+## rural population growth on deforestation rate by region 
+ggplot(panel, aes(x = rpopgr, y = deforestation)) +
+  geom_point(aes(color = region)) + 
+  geom_smooth(method = 'lm', color = "black", size=0.8) +
+  theme_bw() + 
+  xlab("Rural population growth") +
+  ylab("Deforestation rate") +
+  ggtitle("Rural population growth and deforestation rate (regional)")
+
+```
+
+The scatter plot displays a slight increase in the overall deforestation rate and rural population growth hinting at a positive relationship. 
+
+The dataset I am working with is a panel where behavior of entities are observed over time.
+In this case, the entities are represented by countries and are represented by regions. 
+The regions are categorical variables and should be encoded as regional dummy variables from 1-3.
+
+#### Encoding categorical variables
+
+
+```{r}
+panel$region = factor(panel$region,
+                        levels = c('Asia','South America','Africa'),
+                        labels = c(1, 2, 3))
+
+```
+
+Now that the regions are encoded, they will be represented as 1 - Asia, 2 - South America, 3 - Africa
+
+### Modeling with ordinary least squares
+
+
+```{r}
+ols <-lm(deforestation ~ rpopgr + arable + crop + trade + gdppc + rpop + polity + cpscore, data=panel)
+
+stargazer(ols, header=FALSE, type='text')
+```
+
+The regression table shows quite a few significant results.
+
+"rpopgr", crop", and "cpscore" are highly significant at the 1% level. 
+
+The predictor variables, "arable", and "trade" are both less than 5%, while "polity", is significant at 10%. 
+
+The remaining variables, "rpop" and "gdppc" are not statistically significant given their high p-values.
+
+This model can be represented by the linear equation: 
+
+DEFit = ∝_i + β_1ARABLE+β_2CROP+β_3TRADE+β_4GDPPC+β_5RPOP+β_6RPOPGR+β_7CPSCORE+β_8POLITY+ u_it
+
+Note about heterogenity: 
+
+The standard OLS model contains varying parameters across entities and time. This means the slope coefficients and constant have different values for each observation. Generally with panel data sets, there is a higher degree of variability compared to other data types which means that you will most likely experience heterogenity. This model could use a better estimator so let's try another analysis to see if it helps the model.
+
+### Model estimation with fixed effects (within group estimator)
+
+
+```{r}
+feffects <- plm(deforestation ~ rpopgr + arable + crop + trade + gdppc + rpop + polity + cpscore, data=panel, index=c("country", "year"), model="within")
+
+stargazer(feffects, header=FALSE, type='text')
+```
+
+Here I run fixed effects.
+
+Now only "rpopgr" and "crop" are statistically significant(at 1%). 
+
+I will use the PFtest() function to conduct an F-test on whether observed and unobserved fixed effects are equal to zero, meaning they are equal across all units. 
+
+A low p-value would suggest the fixed effects are non-zero and therefore unbiased, which means the fixed effects model is a better choice than the OLS model we used earlier.
+
+
+```{r}
+pFtest(feffects, ols)
+```
+
+We can see that the p-value is statistically significant and therefore I can reject the null hypothesis that there are insignificant effects. If you want to go into furthur detail, rejecting the null hypothesis at 5% means we are 95% confident with strong evidence that we are not making a type I error(rejecting a true null hypothesis).
+
+The fixed effects model is a better suitable technique because it controls for random variation within the model.
+
+If we wanted to go a step furthur, we could also test the model using a random intercept, or individual effects. We are confident enough that the fixed effects model is most suitable but we can learn about this method.
+
+### Model estimation with random effects (individual effects)
+
+
+```{r}
+reffects <- plm(deforestation ~ rpopgr + arable + crop + trade + gdppc + rpop + polity + cpscore, data=panel, index=c("country", "year"), model="random")
+
+stargazer(reffects, header=FALSE, type='text')
+```
+Now only "crop" is statistically significant (at 1%). 
+
+If you needed to decide whether to use fixed or random effects, a Wu-Hausman test would be useful to run to make this decision for your model. The null hypothesis for this test would assume the random effects model, and the alternative hypothesis prefers the fixed effects model. 
+
+use phtest() function to test for fixed or random effects. 
+
+
+```{r}
+phtest(feffects, reffects)
+```
+
+
+The Hausman Test gives us a significant p-value (less than 5%) in favor of the fixed effects model.
+
+-------------
+  
+# Conclusion 
+################################################################################################################################################################################################################################################################################################################################################################################################################
+#  #There seem to be a few correlated variables that were considered for the model. The problem with this is that it's rather difficult to remove variables due to ommitted variable bias and there also exists chances of high variable inflation which also means high multicollinearity. A better pathway to study would be looking at individual countries or regions rather than cross country analysis.  #
+#  #Fixed effects would be the more suitable model given this data. Population growth in rural regions significantly effects the rate at which deforestation occurs, especially in heavily forested areas. One reason this could be the case is that the inhabitants near by forested areas tend to use forested areas as an opportunity to spread industrialized farming, and cattle ranching.                #
+#  #The variable indicating crop production also has a significant effect on deforestation, as expansive farms harvesting soybean are very common in heavily deforested regions in certain countries.                                                                                                                                                                                                          #
+# #While a country's political presense has more impact on it's environment, it supports the idea that political stability positively effects the deforestation rate, as less attention is given to forest monitoring systems, and conservation efforts.                                                                                                                                                       #
+################################################################################################################################################################################################################################################################################################################################################################################################################
